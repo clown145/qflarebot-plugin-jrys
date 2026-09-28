@@ -1,12 +1,13 @@
 {
   "name": "jrys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
   "permissions": [
-    "net",
-    "kv"
+    "db"
   ],
-  "depends": {},
+  "depends": {
+    "t2i": "optional"
+  },
   "conflicts": [],
   "commands": [
     {
@@ -41,20 +42,6 @@
   "configSchema": {
     "type": "object",
     "properties": {
-      "t2i_url": {
-        "type": "string",
-        "title": "AstrBot T2I 服务端点",
-        "description": "用于渲染海报的 T2I 服务地址，需支持 POST /text2img/generate",
-        "default": "https://clown145-astrbot-t2i-service.hf.space"
-      },
-      "t2i_timeout": {
-        "type": "integer",
-        "title": "渲染超时时间 (毫秒)",
-        "description": "调用 T2I 服务的最大等待时间，默认 25000ms",
-        "default": 25000,
-        "minimum": 5000,
-        "maximum": 120000
-      },
       "fixed_daily_fortune": {
         "type": "boolean",
         "title": "每日固定运势",
@@ -148,8 +135,6 @@
     }
   },
   "defaultConfig": {
-    "t2i_url": "https://clown145-astrbot-t2i-service.hf.space",
-    "t2i_timeout": 25000,
     "fixed_daily_fortune": true,
     "fixed_daily_background": false,
     "holiday_rates_enabled": true,

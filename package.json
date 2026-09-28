@@ -1,6 +1,6 @@
 {
   "name": "qflarebot-plugin-jrys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "QQ 机器人今日运势海报生成插件，支持 T2I 渲染、每日固定运势与节假日爆率加权",
   "type": "module",
   "files": [

@@ -1,32 +1,24 @@
 import { definePlugin } from '@qqbot/sdk'
 import { calculateFortune } from './fortune.js'
-import { renderHtmlToImageBase64 } from './t2i.js'
+import { renderPoster } from './render.js'
+import { initSchema, loadLast, saveLast } from './store.js'
 import { renderFortunePosterHtml } from './template.js'
 import type { JrysConfig, LastFortuneRecord } from './types.js'
 
 export default definePlugin<JrysConfig>({
   name: 'jrys',
+  // 没用到契约 2 的 ctx.db.batch()，写 1 让 0.4 以前的机器人也能装（不写就是构建时 SDK 的版本）
+  apiVersion: 1,
   displayName: '今日运势',
   description: '今日运势海报生成插件，基于 AstrBot T2I 渲染 1080x1920 精美大图，支持每日固定运势与节假日高爆率',
-  permissions: ['net', 'kv'],
+  permissions: ['db'],
+  // 海报交给内置 t2i 插件渲染（服务地址、超时在 t2i 的配置里）；t2i 没装、停用或渲染失败时按「渲染异常时降级图文」处理，
+  // 所以是可选依赖。老版本机器人把 optional 当成必需，t2i 是内置的，不受影响
+  depends: { t2i: 'optional' },
 
   configSchema: {
     type: 'object',
     properties: {
-      t2i_url: {
-        type: 'string',
-        title: 'AstrBot T2I 服务端点',
-        description: '用于渲染海报的 T2I 服务地址，需支持 POST /text2img/generate',
-        default: 'https://clown145-astrbot-t2i-service.hf.space',
-      },
-      t2i_timeout: {
-        type: 'integer',
-        title: '渲染超时时间 (毫秒)',
-        description: '调用 T2I 服务的最大等待时间，默认 25000ms',
-        default: 25000,
-        minimum: 5000,
-        maximum: 120000,
-      },
       fixed_daily_fortune: {
         type: 'boolean',
         title: '每日固定运势',
@@ -81,8 +73,6 @@ export default definePlugin<JrysConfig>({
   },
 
   defaultConfig: {
-    t2i_url: 'https://clown145-astrbot-t2i-service.hf.space',
-    t2i_timeout: 25000,
     fixed_daily_fortune: true,
     fixed_daily_background: false,
     holiday_rates_enabled: true,
@@ -90,6 +80,16 @@ export default definePlugin<JrysConfig>({
     normal_rates: { good: 40, normal: 40, bad: 20 },
     holiday_rates: { good: 85, normal: 15, bad: 0 },
     fallback_to_text: true,
+  },
+
+  hooks: {
+    // 放 onBoot 不放 onInstall：从 KV 版本升级上来的已经跑过 onInstall，不会再跑；建表语句本来就可以重复执行。
+    // 没绑 D1 时只记日志，抽签照常，只是 /jrys_last 没有记录
+    async onBoot(ctx) {
+      await initSchema(ctx.db).catch((err: unknown) =>
+        ctx.logger.warn('建表失败，/jrys_last 将没有记录', { error: err instanceof Error ? err.message : String(err) }),
+      )
+    },
   },
 
   commands: {
@@ -105,7 +105,7 @@ export default definePlugin<JrysConfig>({
         // 1. 计算抽取运势与背景壁纸
         const fortune = calculateFortune(userId, userName, userAvatarUrl, ctx.config)
 
-        // 2. 异步将结果记录存入 KV 缓存（保留 7 天）
+        // 2. 记下这次的结果，供 /jrys_last 回看（保留 7 天，见 store.ts）
         const record: LastFortuneRecord = {
           userId,
           userName,
@@ -118,17 +118,17 @@ export default definePlugin<JrysConfig>({
           displayDate: fortune.date.displayDate,
           timestamp: Date.now(),
         }
-        await ctx.kv.put(`last:${userId}`, JSON.stringify(record), { ttl: 86400 * 7 })
+        // 记不下来（没绑 D1、D1 故障）不影响这次抽签
+        await saveLast(ctx.db, record).catch((err: unknown) =>
+          ctx.logger.warn('运势记录写入失败', { error: err instanceof Error ? err.message : String(err), user: userId }),
+        )
 
         // 3. 组装 1080x1920 海报 HTML 模板（1:1 还原原版 painter.py 布局）
         const html = renderFortunePosterHtml(fortune)
 
-        // 4. 调用 AstrBot T2I 服务渲染成图片
+        // 4. 交给内置 t2i 插件渲染成图片
         try {
-          const { base64 } = await renderHtmlToImageBase64(html, ctx.config)
-          return {
-            image: { base64 },
-          }
+          return { image: await renderPoster(ctx, html) }
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err)
           ctx.logger.error('T2I 渲染运势海报失败', { error: errMsg, user: userId })
@@ -157,31 +157,31 @@ export default definePlugin<JrysConfig>({
       description: '查看上次抽取的运势原图与记录',
       async handler({ session, ctx }) {
         const userId = session.userId || 'anonymous'
-        const rawJson = await ctx.kv.get(`last:${userId}`)
-
-        if (!rawJson) {
-          return '你还没有生成过今日运势哦，先发送 /jrys 抽取一张吧！'
-        }
-
+        let record: LastFortuneRecord | null
         try {
-          const record = JSON.parse(rawJson) as LastFortuneRecord
-          const msg =
-            `【上次运势回顾】\n` +
-            `日期：${record.displayDate}\n` +
-            `运势：${record.fortuneSummary} (${record.luckyStar})\n` +
-            `签文：“${record.signText}”\n` +
-            `背景分类：${record.backgroundCategory}`
-
-          if (record.backgroundUrl) {
-            return {
-              text: msg,
-              image: { url: record.backgroundUrl },
-            }
-          }
-          return msg
+          record = await loadLast(ctx.db, userId)
         } catch {
           return '读取历史记录失败，请重新发送 /jrys 抽取！'
         }
+
+        if (!record) {
+          return '你还没有生成过今日运势哦，先发送 /jrys 抽取一张吧！'
+        }
+
+        const msg =
+          `【上次运势回顾】\n` +
+          `日期：${record.displayDate}\n` +
+          `运势：${record.fortuneSummary} (${record.luckyStar})\n` +
+          `签文：“${record.signText}”\n` +
+          `背景分类：${record.backgroundCategory}`
+
+        if (record.backgroundUrl) {
+          return {
+            text: msg,
+            image: { url: record.backgroundUrl },
+          }
+        }
+        return msg
       },
     },
   },

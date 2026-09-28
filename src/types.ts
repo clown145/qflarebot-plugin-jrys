@@ -2,10 +2,6 @@
  * 今日运势插件配置项
  */
 export interface JrysConfig {
-  /** AstrBot T2I 服务接口地址 */
-  t2i_url: string
-  /** 渲染超时时间 (ms) */
-  t2i_timeout: number
   /** 是否启用每日固定运势（同一用户在当天多次触发签文结果固定） */
   fixed_daily_fortune: boolean
   /** 是否连同背景图也一同固定（默认关闭：每次触发随机抽取新背景壁纸） */
@@ -66,7 +62,7 @@ export interface FortuneResult {
 }
 
 /**
- * 用户最近一次抽取记录（保存在 KV 中）
+ * 用户最近一次抽取记录（保存在 D1 中，见 store.ts）
  */
 export interface LastFortuneRecord {
   userId: string

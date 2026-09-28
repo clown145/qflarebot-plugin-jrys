@@ -1,9 +1,10 @@
-import { createMockContext, createMockSession, runCommand } from '@qqbot/sdk/testing'
-import { describe, expect, it, vi } from 'vitest'
-import { calculateFortune, getBeijingDate } from './fortune.js'
+import { describe, expect, it } from 'vitest'
+import { calculateFortune } from './fortune.js'
 import plugin from './index.js'
 import { hashString, mulberry32, weightedChoice } from './prng.js'
 import { renderFortunePosterHtml } from './template.js'
+
+// 两条命令（出图、记录）的测试在 commands.test.ts
 
 describe('PRNG & Deterministic Seeding', () => {
   it('hashString 计算字符串散列值', () => {
@@ -73,81 +74,5 @@ describe('HTML Poster Template', () => {
     expect(html).toContain('translucent-layer')
     expect(html).toContain('avatar-img')
     expect(html).toContain('仅供娱乐 | 相信科学 | 请勿迷信')
-  })
-})
-
-describe('Commands', () => {
-  it('/jrys_last 在无记录时提示先抽取', async () => {
-    const session = await runCommand(plugin, 'jrys_last')
-    expect(session.replies[0]).toContain('你还没有生成过今日运势哦')
-  })
-
-  it('/jrys_last 成功读取历史记录', async () => {
-    const ctx = createMockContext(plugin)
-    await ctx.kv.put(
-      'last:u123',
-      JSON.stringify({
-        userId: 'u123',
-        userName: '小明',
-        fortuneSummary: '大吉',
-        luckyStar: '★★★★★★☆',
-        signText: '草木逢春',
-        unsignText: '好运连连',
-        backgroundUrl: 'https://example.com/bg.jpg',
-        backgroundCategory: 'miku',
-        displayDate: '2026/09/20',
-        timestamp: Date.now(),
-      }),
-    )
-
-    const session = createMockSession({ userId: 'u123', content: '/jrys_last' })
-    // Command 可以直接写成函数，也可以是带 handler 的对象
-    const command = plugin.commands!.jrys_last!
-    const handler = typeof command === 'function' ? command : command.handler
-    const reply = await handler({
-      session,
-      ctx,
-      command: 'jrys_last',
-      args: [],
-      argText: '',
-    })
-
-    expect(reply).toMatchObject({
-      text: expect.stringContaining('【上次运势回顾】'),
-      image: { url: 'https://example.com/bg.jpg' },
-    })
-  })
-
-  it('/jrys 调用 T2I 成功并返回图片 Base64', async () => {
-    const mockImageBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]) // JPEG 标头
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        arrayBuffer: async () => mockImageBytes.buffer,
-      }),
-    )
-
-    const session = await runCommand(plugin, 'jrys')
-    expect(session.replies[0]).toMatchObject({
-      image: {
-        base64: expect.any(String),
-      },
-    })
-    vi.unstubAllGlobals()
-  })
-
-  it('/jrys 当 T2I 渲染超时时自动降级发送图文卡片', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockRejectedValue(new Error('Connect timeout')),
-    )
-
-    const session = await runCommand(plugin, 'jrys')
-    expect(session.replies[0]).toMatchObject({
-      text: expect.stringContaining('【今日运势 · '),
-    })
-    vi.unstubAllGlobals()
   })
 })
